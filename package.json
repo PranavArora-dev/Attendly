@@ -1,0 +1,8 @@
+{
+  "name": "attendly",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Attendly - smart attendance (frontend + backend, zero dependencies)",
+  "scripts": { "start": "node --no-warnings server.js", "dev": "node --no-warnings --watch server.js", "test": "node --no-warnings test.js" },
+  "engines": { "node": ">=22.13" }
+}

@@ -1,0 +1,40 @@
+'use strict';
+/* Run: npm test  (temporary database use karta hai, aapka data safe hai) */
+process.env.DB_PATH = ':memory:'; process.env.JWT_SECRET = 'test-secret'; process.env.SEED_DEMO = 'true';
+const assert = require('node:assert/strict');
+const server = require('./server');
+let base;
+const call = async (m, p, body, tok) => {
+  const r = await fetch(base + p, { method: m, headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: 'Bearer ' + tok } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  return { s: r.status, j: await r.json().catch(() => null) };
+};
+(async () => {
+  await new Promise(r => server.listen(0, r)); base = 'http://localhost:' + server.address().port;
+  let n = 0; const ok = (name) => console.log('  ok', ++n, name);
+  assert.equal((await call('POST', '/api/auth/login', { identifier: 'prof@college.edu', password: 'wrong' })).s, 401); ok('wrong password rejected');
+  assert.equal((await call('POST', '/api/auth/login', {})).s, 400); ok('empty login rejected');
+  const T = (await call('POST', '/api/auth/login', { identifier: 'prof@college.edu', password: 'teacher123' })).j; assert.equal(T.user.role, 'teacher'); ok('teacher login');
+  const S = (await call('POST', '/api/auth/login', { identifier: '220101', password: 'student123' })).j; assert.equal(S.user.className, 'CSE-3A'); ok('student login by roll no');
+  assert.equal((await call('GET', '/api/classes')).s, 401); ok('no token blocked');
+  assert.equal((await call('GET', '/api/teacher/dashboard', null, S.token)).s, 403); ok('student blocked from teacher API');
+  const d = (await call('GET', '/api/teacher/dashboard?range=this', null, T.token)).j;
+  assert.equal(d.stats.classes, 4); assert.equal(d.stats.students, 8); assert.equal(d.stats.pending, 2); assert.equal(d.week.length, 6); assert.equal(d.activity.length, 3); ok('dashboard shape + stats');
+  const cls = (await call('GET', '/api/classes', null, T.token)).j; assert.equal(cls.length, 4); assert.equal(cls[0].count, 8);
+  const date = new Date().toISOString().slice(0, 10), id = cls[3].id;
+  let rows = (await call('GET', `/api/classes/${id}/attendance?date=${date}`, null, T.token)).j; assert.equal(rows.length, 8); ok('class attendance list');
+  const recs = rows.map((r, i) => ({ studentId: r.studentId, status: i < 3 ? 'A' : 'P' }));
+  assert.equal((await call('POST', `/api/classes/${id}/attendance`, { date, records: recs }, T.token)).s, 200);
+  rows = (await call('GET', `/api/classes/${id}/attendance?date=${date}`, null, T.token)).j; assert.equal(rows.filter(r => r.status === 'A').length, 3); ok('save + reload attendance');
+  assert.equal((await call('POST', `/api/classes/${id}/attendance`, { date, records: [{ studentId: 9999, status: 'P' }] }, T.token)).s, 400); ok('foreign student rejected');
+  assert.equal((await call('POST', `/api/classes/${id}/attendance`, { date: '2999-01-01', records: recs }, T.token)).s, 400); ok('future date rejected');
+  assert.equal((await call('GET', '/api/teacher/dashboard', null, T.token)).j.stats.pending, 1); ok('pending count drops after saving');
+  const rep = (await call('GET', '/api/reports?class=CSE-3A&subject=&days=30', null, T.token)).j; assert.equal(rep.count, 8); assert.ok(rep.rows[0].total > 0); ok('report');
+  const rep2 = (await call('GET', '/api/reports?class=CSE-3A&subject=Data%20Structures&days=7', null, T.token)).j; assert.equal(rep2.count, 8); ok('report with subject filter');
+  const o = (await call('GET', '/api/student/overview', null, S.token)).j;
+  assert.equal(o.subjects.length, 4); assert.ok(o.history.length > 0 && o.timetable.length === 5 && o.total === o.attended + o.missed); ok('student overview');
+  assert.equal((await call('GET', '/api/students', null, T.token)).j.length, 8); ok('students list');
+  assert.equal((await call('GET', '/api/subjects', null, S.token)).j.length, 4); assert.ok((await call('GET', '/api/announcements', null, S.token)).j[0].ago); ok('subjects + announcements');
+  const html = await fetch(base + '/'); assert.equal(html.status, 200); assert.match(await html.text(), /Attendly/); ok('frontend served');
+  assert.equal((await fetch(base + '/..%2fserver.js')).status, 404); assert.equal((await fetch(base + '/js/../../server.js')).status, 404); ok('path traversal blocked');
+  console.log('\nAll ' + n + ' checks passed.'); server.close(); process.exit(0);
+})().catch(e => { console.error('FAILED:', e.message); process.exit(1); });

@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: attendly
+    runtime: node
+    plan: free
+    buildCommand: node -v
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: JWT_SECRET
+        generateValue: true
